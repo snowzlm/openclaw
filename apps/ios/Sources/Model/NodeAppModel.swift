@@ -225,6 +225,9 @@ final class NodeAppModel {
             var attempt = 0
             while !Task.isCancelled {
                 await MainActor.run {
+                    // Avoid spamming "Connecting…" while already connected; GatewayNodeSession.connect()
+                    // returns fast when a channel is already up, and we don't want to clobber UI state.
+                    guard !self.gatewayConnected else { return }
                     if attempt == 0 {
                         self.gatewayStatusText = "Connecting…"
                     } else {

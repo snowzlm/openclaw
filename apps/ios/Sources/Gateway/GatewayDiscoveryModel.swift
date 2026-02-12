@@ -6,6 +6,12 @@ import Observation
 @MainActor
 @Observable
 final class GatewayDiscoveryModel {
+    struct ResolvedTXT: Equatable {
+        var txt: [String: String]
+        var hostName: String?
+        var port: Int?
+    }
+
     struct DebugLogEntry: Identifiable, Equatable {
         var id = UUID()
         var ts: Date
@@ -32,8 +38,11 @@ final class GatewayDiscoveryModel {
     private(set) var debugLog: [DebugLogEntry] = []
 
     private var browsers: [String: NWBrowser] = [:]
+    private var resultsByDomain: [String: Set<NWBrowser.Result>] = [:]
     private var gatewaysByDomain: [String: [DiscoveredGateway]] = [:]
     private var statesByDomain: [String: NWBrowser.State] = [:]
+    private var resolvedByID: [String: ResolvedTXT] = [:]
+    private var pendingResolvers: [String: GatewayTXTResolver] = [:]
     private var debugLoggingEnabled = false
     private var lastStableIDs = Set<String>()
 
@@ -52,7 +61,7 @@ final class GatewayDiscoveryModel {
         if !self.browsers.isEmpty { return }
         self.appendDebugLog("start()")
 
-        for domain in OpenClawBonjour.gatewayServiceDomains {
+        for domain in Self.discoveryDomains() {
             let params = NWParameters.tcp
             params.includePeerToPeer = true
             let browser = NWBrowser(
@@ -71,34 +80,8 @@ final class GatewayDiscoveryModel {
             browser.browseResultsChangedHandler = { [weak self] results, _ in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.gatewaysByDomain[domain] = results.compactMap { result -> DiscoveredGateway? in
-                        switch result.endpoint {
-                        case let .service(name, _, _, _):
-                            let decodedName = BonjourEscapes.decode(name)
-                            let txt = result.endpoint.txtRecord?.dictionary ?? [:]
-                            let advertisedName = txt["displayName"]
-                            let prettyAdvertised = advertisedName
-                                .map(Self.prettifyInstanceName)
-                                .flatMap { $0.isEmpty ? nil : $0 }
-                            let prettyName = prettyAdvertised ?? Self.prettifyInstanceName(decodedName)
-                            return DiscoveredGateway(
-                                name: prettyName,
-                                endpoint: result.endpoint,
-                                stableID: GatewayEndpointID.stableID(result.endpoint),
-                                debugID: GatewayEndpointID.prettyDescription(result.endpoint),
-                                lanHost: Self.txtValue(txt, key: "lanHost"),
-                                tailnetDns: Self.txtValue(txt, key: "tailnetDns"),
-                                gatewayPort: Self.txtIntValue(txt, key: "gatewayPort"),
-                                canvasPort: Self.txtIntValue(txt, key: "canvasPort"),
-                                tlsEnabled: Self.txtBoolValue(txt, key: "gatewayTls"),
-                                tlsFingerprintSha256: Self.txtValue(txt, key: "gatewayTlsSha256"),
-                                cliPath: Self.txtValue(txt, key: "cliPath"))
-                        default:
-                            return nil
-                        }
-                    }
-                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
+                    self.resultsByDomain[domain] = results
+                    self.updateGateways(for: domain)
                     self.recomputeGateways()
                 }
             }
@@ -114,10 +97,101 @@ final class GatewayDiscoveryModel {
             browser.cancel()
         }
         self.browsers = [:]
+        self.resultsByDomain = [:]
         self.gatewaysByDomain = [:]
         self.statesByDomain = [:]
+        self.resolvedByID = [:]
+        self.pendingResolvers.values.forEach { $0.cancel() }
+        self.pendingResolvers = [:]
         self.gateways = []
         self.statusText = "Stopped"
+    }
+
+    private func updateGateways(for domain: String) {
+        guard let results = self.resultsByDomain[domain] else {
+            self.gatewaysByDomain[domain] = []
+            return
+        }
+
+        self.gatewaysByDomain[domain] = results.compactMap { result -> DiscoveredGateway? in
+            guard case let .service(name, type, resultDomain, _) = result.endpoint else { return nil }
+
+            let stableID = GatewayEndpointID.stableID(result.endpoint)
+            let resolved = self.resolvedByID[stableID]
+            let txt = Self.txtDictionary(from: result).merging(
+                resolved?.txt ?? [:],
+                uniquingKeysWith: { _, new in new })
+
+            let decodedName = BonjourEscapes.decode(name)
+            let advertisedName = txt["displayName"]
+            let prettyAdvertised = advertisedName
+                .map(Self.prettifyInstanceName)
+                .flatMap { $0.isEmpty ? nil : $0 }
+            let prettyName = prettyAdvertised ?? Self.prettifyInstanceName(decodedName)
+
+            var lanHost = Self.txtValue(txt, key: "lanHost")
+            if lanHost == nil {
+                lanHost = Self.trimmed(resolved?.hostName)
+            }
+            let tailnetDns = Self.txtValue(txt, key: "tailnetDns")
+            let gatewayPort = Self.txtIntValue(txt, key: "gatewayPort") ?? resolved?.port
+
+            if Self.trimmed(lanHost) == nil && Self.trimmed(tailnetDns) == nil {
+                self.ensureTXTResolution(
+                    stableID: stableID,
+                    serviceName: name,
+                    type: type,
+                    domain: resultDomain)
+            }
+
+            return DiscoveredGateway(
+                name: prettyName,
+                endpoint: result.endpoint,
+                stableID: stableID,
+                debugID: GatewayEndpointID.prettyDescription(result.endpoint),
+                lanHost: Self.trimmed(lanHost),
+                tailnetDns: tailnetDns,
+                gatewayPort: gatewayPort,
+                canvasPort: Self.txtIntValue(txt, key: "canvasPort"),
+                tlsEnabled: Self.txtBoolValue(txt, key: "gatewayTls"),
+                tlsFingerprintSha256: Self.txtValue(txt, key: "gatewayTlsSha256"),
+                cliPath: Self.txtValue(txt, key: "cliPath"))
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func updateGatewaysForAllDomains() {
+        for domain in self.resultsByDomain.keys {
+            self.updateGateways(for: domain)
+        }
+    }
+
+    private func ensureTXTResolution(
+        stableID: String,
+        serviceName: String,
+        type: String,
+        domain: String)
+    {
+        guard self.resolvedByID[stableID] == nil else { return }
+        guard self.pendingResolvers[stableID] == nil else { return }
+
+        let resolver = GatewayTXTResolver(name: serviceName, type: type, domain: domain) { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                self.pendingResolvers[stableID] = nil
+                switch result {
+                case let .success(resolved):
+                    self.resolvedByID[stableID] = resolved
+                    self.updateGatewaysForAllDomains()
+                    self.recomputeGateways()
+                case .failure:
+                    break
+                }
+            }
+        }
+
+        self.pendingResolvers[stableID] = resolver
+        resolver.start()
     }
 
     private func recomputeGateways() {
@@ -133,6 +207,7 @@ final class GatewayDiscoveryModel {
         }
         self.lastStableIDs = nextIDs
         self.gateways = next
+        self.updateStatusText()
     }
 
     private func updateStatusText() {
@@ -163,7 +238,14 @@ final class GatewayDiscoveryModel {
         }
 
         if states.contains(where: { if case .ready = $0 { true } else { false } }) {
-            self.statusText = "Searching…"
+            let count = self.gateways.count
+            if count == 1 {
+                self.statusText = "Ready: 1 gateway"
+            } else if count > 1 {
+                self.statusText = "Ready: \(count) gateways"
+            } else {
+                self.statusText = "Ready"
+            }
             return
         }
 
@@ -200,11 +282,31 @@ final class GatewayDiscoveryModel {
         }
     }
 
+    private static func trimmed(_ raw: String?) -> String? {
+        var value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasSuffix(".") {
+            value = String(value.dropLast())
+        }
+        return value.isEmpty ? nil : value
+    }
+
     private static func prettifyInstanceName(_ decodedName: String) -> String {
         let normalized = decodedName.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let stripped = normalized.replacingOccurrences(of: " (OpenClaw)", with: "")
             .replacingOccurrences(of: #"\s+\(\d+\)$"#, with: "", options: .regularExpression)
         return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func discoveryDomains(defaults: UserDefaults = .standard) -> [String] {
+        var domains = OpenClawBonjour.gatewayServiceDomains
+        let raw = defaults.string(forKey: "gateway.discovery.domain")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !raw.isEmpty else { return domains }
+        let normalized = OpenClawBonjour.normalizeServiceDomain(raw)
+        if normalized != OpenClawBonjour.gatewayServiceDomain, !domains.contains(normalized) {
+            domains.append(normalized)
+        }
+        return domains
     }
 
     private static func txtValue(_ dict: [String: String], key: String) -> String? {
@@ -221,4 +323,82 @@ final class GatewayDiscoveryModel {
         guard let raw = self.txtValue(dict, key: key)?.lowercased() else { return false }
         return raw == "1" || raw == "true" || raw == "yes"
     }
+
+    private static func txtDictionary(from result: NWBrowser.Result) -> [String: String] {
+        var merged: [String: String] = [:]
+
+        if case let .bonjour(txt) = result.metadata {
+            merged.merge(txt.dictionary, uniquingKeysWith: { _, new in new })
+        }
+
+        if let endpointTxt = result.endpoint.txtRecord?.dictionary {
+            merged.merge(endpointTxt, uniquingKeysWith: { _, new in new })
+        }
+
+        return merged
+    }
+}
+
+final class GatewayTXTResolver: NSObject, NetServiceDelegate {
+    private let service: NetService
+    private let completion: (Result<GatewayDiscoveryModel.ResolvedTXT, Error>) -> Void
+    private var didFinish = false
+
+    init(
+        name: String,
+        type: String,
+        domain: String,
+        completion: @escaping (Result<GatewayDiscoveryModel.ResolvedTXT, Error>) -> Void)
+    {
+        self.service = NetService(domain: domain, type: type, name: name)
+        self.completion = completion
+        super.init()
+        self.service.delegate = self
+    }
+
+    func start(timeout: TimeInterval = 2.0) {
+        self.service.schedule(in: .main, forMode: .common)
+        self.service.resolve(withTimeout: timeout)
+    }
+
+    func cancel() {
+        self.finish(result: .failure(GatewayTXTResolverError.cancelled))
+    }
+
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        let txt = Self.decodeTXT(sender.txtRecordData())
+        let hostName = sender.hostName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = sender.port > 0 ? sender.port : nil
+        self.finish(result: .success(GatewayDiscoveryModel.ResolvedTXT(txt: txt, hostName: hostName, port: port)))
+    }
+
+    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        self.finish(result: .failure(GatewayTXTResolverError.resolveFailed(errorDict)))
+    }
+
+    private func finish(result: Result<GatewayDiscoveryModel.ResolvedTXT, Error>) {
+        guard !self.didFinish else { return }
+        self.didFinish = true
+        self.service.stop()
+        self.service.remove(from: .main, forMode: .common)
+        self.completion(result)
+    }
+
+    private static func decodeTXT(_ data: Data?) -> [String: String] {
+        guard let data else { return [:] }
+        let dict = NetService.dictionary(fromTXTRecord: data)
+        var out: [String: String] = [:]
+        out.reserveCapacity(dict.count)
+        for (key, value) in dict {
+            if let str = String(data: value, encoding: .utf8) {
+                out[key] = str
+            }
+        }
+        return out
+    }
+}
+
+enum GatewayTXTResolverError: Error {
+    case cancelled
+    case resolveFailed([String: NSNumber])
 }

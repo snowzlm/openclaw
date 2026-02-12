@@ -254,9 +254,13 @@ final class ScreenController {
         let trimmed = self.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowScroll = !trimmed.isEmpty
         let scrollView = self.webView.scrollView
-        // Default canvas needs raw touch events; external pages should scroll.
-        scrollView.isScrollEnabled = allowScroll
+        // iOS 26.x Simulator: toggling scroll enabled on WKWebView has triggered UIKit gesture crashes.
+        // Keep scrolling enabled; scaffold isn't scrollable anyway.
+        scrollView.isScrollEnabled = true
         scrollView.bounces = allowScroll
+        scrollView.alwaysBounceVertical = allowScroll
+        scrollView.alwaysBounceHorizontal = allowScroll
+        scrollView.delaysContentTouches = false
     }
 
     private static func jsValue(_ value: String?) -> String {

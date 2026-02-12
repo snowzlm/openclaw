@@ -4,14 +4,19 @@ import UIKit
 struct RootCanvas: View {
     @Environment(NodeAppModel.self) private var appModel
     @Environment(VoiceWakeManager.self) private var voiceWake
+    @Environment(GatewayConnectionController.self) private var gatewayController
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(VoiceWakePreferences.enabledKey) private var voiceWakeEnabled: Bool = false
     @AppStorage("screen.preventSleep") private var preventSleep: Bool = true
     @AppStorage("canvas.debugStatusEnabled") private var canvasDebugStatusEnabled: Bool = false
+    @AppStorage("onboarding.requestID") private var onboardingRequestID: Int = 0
     @State private var presentedSheet: PresentedSheet?
     @State private var voiceWakeToastText: String?
     @State private var toastDismissTask: Task<Void, Never>?
+    @State private var showOnboarding: Bool = false
+    @State private var onboardingAllowSkip: Bool = true
+    @State private var didEvaluateOnboarding: Bool = false
 
     private enum PresentedSheet: Identifiable {
         case settings
@@ -57,13 +62,32 @@ struct RootCanvas: View {
                     userAccent: self.appModel.seamColor)
             }
         }
+        .fullScreenCover(isPresented: self.$showOnboarding) {
+            OnboardingWizardView(
+                allowSkip: self.onboardingAllowSkip,
+                onClose: {
+                    self.showOnboarding = false
+                })
+                .environment(self.appModel)
+                .environment(self.appModel.voiceWake)
+                .environment(self.gatewayController)
+        }
         .onAppear { self.updateIdleTimer() }
         .onChange(of: self.preventSleep) { _, _ in self.updateIdleTimer() }
         .onChange(of: self.scenePhase) { _, _ in self.updateIdleTimer() }
+        .onAppear { self.evaluateOnboardingPresentation(force: false) }
         .onAppear { self.updateCanvasDebugStatus() }
         .onChange(of: self.canvasDebugStatusEnabled) { _, _ in self.updateCanvasDebugStatus() }
         .onChange(of: self.appModel.gatewayStatusText) { _, _ in self.updateCanvasDebugStatus() }
         .onChange(of: self.appModel.gatewayServerName) { _, _ in self.updateCanvasDebugStatus() }
+        .onChange(of: self.appModel.gatewayServerName) { _, newValue in
+            if newValue != nil {
+                self.showOnboarding = false
+            }
+        }
+        .onChange(of: self.onboardingRequestID) { _, _ in
+            self.evaluateOnboardingPresentation(force: true)
+        }
         .onChange(of: self.appModel.gatewayRemoteAddress) { _, _ in self.updateCanvasDebugStatus() }
         .onChange(of: self.voiceWake.lastTriggeredCommand) { _, newValue in
             guard let newValue else { return }
@@ -118,6 +142,20 @@ struct RootCanvas: View {
         let title = self.appModel.gatewayStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         let subtitle = self.appModel.gatewayServerName ?? self.appModel.gatewayRemoteAddress
         self.appModel.screen.updateDebugStatus(title: title, subtitle: subtitle)
+    }
+
+    private func evaluateOnboardingPresentation(force: Bool) {
+        if force {
+            self.onboardingAllowSkip = true
+            self.showOnboarding = true
+            return
+        }
+
+        guard !self.didEvaluateOnboarding else { return }
+        self.didEvaluateOnboarding = true
+        guard OnboardingStateStore.shouldPresentOnLaunch(appModel: self.appModel) else { return }
+        self.onboardingAllowSkip = true
+        self.showOnboarding = true
     }
 }
 

@@ -9,13 +9,31 @@ import UIKit
 @MainActor
 @Observable
 final class GatewayConnectionController {
+    struct LastAttemptedEndpoint: Equatable {
+        enum Source: Equatable {
+            case discovered
+            case manual
+            case autoConnect
+        }
+
+        var host: String
+        var port: Int
+        var useTLS: Bool
+        var source: Source
+    }
+
     private(set) var gateways: [GatewayDiscoveryModel.DiscoveredGateway] = []
     private(set) var discoveryStatusText: String = "Idle"
     private(set) var discoveryDebugLog: [GatewayDiscoveryModel.DebugLogEntry] = []
+    private(set) var lastAttemptedEndpoint: LastAttemptedEndpoint?
 
     private let discovery = GatewayDiscoveryModel()
     private weak var appModel: NodeAppModel?
     private var didAutoConnect = false
+
+    private static let lastHostDefaultsKey = "gateway.lastHost"
+    private static let lastPortDefaultsKey = "gateway.lastPort"
+    private static let lastTlsDefaultsKey = "gateway.lastTls"
 
     init(appModel: NodeAppModel, startDiscovery: Bool = true) {
         self.appModel = appModel
@@ -23,6 +41,13 @@ final class GatewayConnectionController {
         GatewaySettingsStore.bootstrapPersistence()
         let defaults = UserDefaults.standard
         self.discovery.setDebugLoggingEnabled(defaults.bool(forKey: "gateway.discovery.debugLogs"))
+        if let last = Self.loadLastConnection(defaults: defaults) {
+            self.lastAttemptedEndpoint = LastAttemptedEndpoint(
+                host: last.host,
+                port: last.port,
+                useTLS: last.useTLS,
+                source: .autoConnect)
+        }
 
         self.updateFromDiscovery()
         self.observeDiscovery()
@@ -47,6 +72,18 @@ final class GatewayConnectionController {
         }
     }
 
+    func allowAutoConnectAgain() {
+        self.didAutoConnect = false
+        self.maybeAutoConnect()
+    }
+
+    func restartDiscovery() {
+        self.discovery.stop()
+        self.didAutoConnect = false
+        self.discovery.start()
+        self.updateFromDiscovery()
+    }
+
     func connect(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) async {
         let instanceId = UserDefaults.standard.string(forKey: "node.instanceId")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -60,6 +97,7 @@ final class GatewayConnectionController {
             port: port,
             useTLS: tlsParams?.required == true)
         else { return }
+        self.recordLastAttempt(host: host, port: port, useTLS: tlsParams?.required == true, source: .discovered)
         self.didAutoConnect = true
         self.startAutoConnect(
             url: url,
@@ -81,6 +119,7 @@ final class GatewayConnectionController {
             port: port,
             useTLS: tlsParams?.required == true)
         else { return }
+        self.recordLastAttempt(host: host, port: port, useTLS: tlsParams?.required == true, source: .manual)
         self.didAutoConnect = true
         self.startAutoConnect(
             url: url,
@@ -146,6 +185,11 @@ final class GatewayConnectionController {
                 useTLS: tlsParams?.required == true)
             else { return }
 
+            self.recordLastAttempt(
+                host: manualHost,
+                port: resolvedPort,
+                useTLS: tlsParams?.required == true,
+                source: .autoConnect)
             self.didAutoConnect = true
             self.startAutoConnect(
                 url: url,
@@ -173,6 +217,7 @@ final class GatewayConnectionController {
         guard let url = self.buildGatewayURL(host: host, port: port, useTLS: tlsParams?.required == true)
         else { return }
 
+        self.recordLastAttempt(host: host, port: port, useTLS: tlsParams?.required == true, source: .autoConnect)
         self.didAutoConnect = true
         self.startAutoConnect(
             url: url,
@@ -258,6 +303,50 @@ final class GatewayConnectionController {
             return tailnet
         }
         return nil
+    }
+
+    func reconnectLastAttempt() async {
+        if let lastAttemptedEndpoint {
+            await self.connectManual(
+                host: lastAttemptedEndpoint.host,
+                port: lastAttemptedEndpoint.port,
+                useTLS: lastAttemptedEndpoint.useTLS)
+            return
+        }
+        guard let fallback = Self.loadLastConnection(defaults: .standard) else { return }
+        await self.connectManual(host: fallback.host, port: fallback.port, useTLS: fallback.useTLS)
+    }
+
+    private func recordLastAttempt(
+        host: String,
+        port: Int,
+        useTLS: Bool,
+        source: LastAttemptedEndpoint.Source)
+    {
+        self.saveLastConnection(host: host, port: port, useTLS: useTLS)
+        self.lastAttemptedEndpoint = LastAttemptedEndpoint(
+            host: host.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: port,
+            useTLS: useTLS,
+            source: source)
+    }
+
+    private func saveLastConnection(host: String, port: Int, useTLS: Bool) {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, port > 0, port <= 65535 else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(trimmed, forKey: Self.lastHostDefaultsKey)
+        defaults.set(port, forKey: Self.lastPortDefaultsKey)
+        defaults.set(useTLS, forKey: Self.lastTlsDefaultsKey)
+    }
+
+    static func loadLastConnection(defaults: UserDefaults = .standard) -> (host: String, port: Int, useTLS: Bool)? {
+        let host = defaults.string(forKey: Self.lastHostDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let port = defaults.integer(forKey: Self.lastPortDefaultsKey)
+        let tls = defaults.bool(forKey: Self.lastTlsDefaultsKey)
+        guard !host.isEmpty, port > 0, port <= 65535 else { return nil }
+        return (host, port, tls)
     }
 
     private func buildGatewayURL(host: String, port: Int, useTLS: Bool) -> URL? {
@@ -429,6 +518,10 @@ extension GatewayConnectionController {
 
     func _test_triggerAutoConnect() {
         self.maybeAutoConnect()
+    }
+
+    func _test_setLastAttemptedEndpoint(_ endpoint: LastAttemptedEndpoint?) {
+        self.lastAttemptedEndpoint = endpoint
     }
 }
 #endif

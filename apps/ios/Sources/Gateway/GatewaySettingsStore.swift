@@ -93,6 +93,12 @@ enum GatewaySettingsStore {
             account: self.gatewayTokenAccount(instanceId: instanceId))
     }
 
+    static func deleteGatewayToken(instanceId: String) {
+        _ = KeychainStore.delete(
+            service: self.gatewayService,
+            account: self.gatewayTokenAccount(instanceId: instanceId))
+    }
+
     static func loadGatewayPassword(instanceId: String) -> String? {
         KeychainStore.loadString(
             service: self.gatewayService,
@@ -103,6 +109,12 @@ enum GatewaySettingsStore {
     static func saveGatewayPassword(_ password: String, instanceId: String) {
         _ = KeychainStore.saveString(
             password,
+            service: self.gatewayService,
+            account: self.gatewayPasswordAccount(instanceId: instanceId))
+    }
+
+    static func deleteGatewayPassword(instanceId: String) {
+        _ = KeychainStore.delete(
             service: self.gatewayService,
             account: self.gatewayPasswordAccount(instanceId: instanceId))
     }
