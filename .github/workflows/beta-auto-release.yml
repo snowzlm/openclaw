@@ -1,0 +1,39 @@
+name: Beta Auto Release with Timestamp
+
+on:
+  push:
+    branches:
+      - beta
+  workflow_dispatch:
+
+jobs:
+  create-beta-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Get version and timestamp
+      id: get_version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        TAG_NAME="v${VERSION}-beta.${TIMESTAMP}"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+        
+    - name: Create Release with Timestamp
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: OpenClaw ${{ env.VERSION }} (Beta - ${{ github.sha }})
+        prerelease: true
+        generate_release_notes: true
