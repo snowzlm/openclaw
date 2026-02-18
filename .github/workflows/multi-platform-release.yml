@@ -1,0 +1,247 @@
+name: Multi-Platform Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+  workflow_dispatch:
+    inputs:
+      release-type:
+        description: 'Release type'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+        - stable
+        - beta
+        - dev
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw core
+      run: pnpm build
+        
+    - name: Build UI
+      run: pnpm ui:build
+        
+    - name: Create npm package
+      run: |
+        npm pack
+        ls -la *.tgz
+        
+    - name: Get version and branch info
+      id: get_info
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$BRANCH" = "beta" ]; then
+          RELEASE_TYPE="beta"
+          PRERELEASE=true
+        else
+          RELEASE_TYPE="stable"
+          PRERELEASE=false
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
+        echo "PRERELEASE=$PRERELEASE" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+        echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ env.VERSION }}-${{ env.RELEASE_TYPE }}
+        release_name: OpenClaw ${{ env.VERSION }} (${{ env.RELEASE_TYPE }})
+        draft: false
+        prerelease: ${{ env.PRERELEASE }}
+        
+    - name: Upload npm package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./openclaw-${{ env.VERSION }}.tgz
+        asset_name: openclaw-${{ env.VERSION }}.tgz
+        asset_content_type: application/gzip
+
+  build-macos:
+    needs: build-and-release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw
+      run: pnpm build
+        
+    - name: Build UI
+      run: pnpm ui:build
+        
+    - name: Package macOS app
+      run: pnpm mac:package
+        
+    - name: Create DMG
+      run: bash scripts/create-dmg.sh
+        
+    - name: Get version and branch info
+      id: get_info_mac
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$BRANCH" = "beta" ]; then
+          RELEASE_TYPE="beta"
+        else
+          RELEASE_TYPE="stable"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
+        
+    - name: Upload macOS app
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.build-and-release.outputs.upload_url }}
+        asset_path: ./dist/OpenClaw-${{ env.VERSION }}-${{ env.RELEASE_TYPE }}.dmg
+        asset_name: OpenClaw-${{ env.VERSION }}-${{ env.RELEASE_TYPE }}.dmg
+        asset_content_type: application/x-apple-diskimage
+
+  build-android:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      
+    - name: Build Android app
+      run: pnpm android:assemble
+        
+    - name: Get version and branch info
+      id: get_info_android
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$BRANCH" = "beta" ]; then
+          RELEASE_TYPE="beta"
+        else
+          RELEASE_TYPE="stable"
+        fi
+        echo "VERSION=$VERSION" >> $GISHUB_ENV
+        echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
+        
+    - name: Upload Android APK
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.build-and-release.outputs.upload_url }}
+        asset_path: ./apps/android/app/build/outputs/apk/debug/app-debug.apk
+        asset_name: OpenClaw-${{ env.VERSION }}-${{ env.RELEASE_TYPE }}-android.apk
+        asset_content_type: application/vnd.android.package-archive
+
+  update-readme:
+    needs: [build-and-release, build-macos, build-android]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Get version and branch info
+      id: get_info_readme
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$BRANCH" = "beta" ]; then
+          RELEASE_TYPE="beta"
+        else
+          RELEASE_TYPE="stable"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
+        
+    - name: Update README with new release links
+      run: |
+        # Update README badges and links to point to this repository
+        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/snowzlm/openclaw/releases|g" README.md
+        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/snowzlm/openclaw|g" README.md
+        
+    - name: Commit and push README changes
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add README.md
+        git commit -m "chore: update README release links for v${{ env.VERSION }} (${{ env.RELEASE_TYPE }})"
+        git push

@@ -1,0 +1,122 @@
+name: Build and Release OpenClaw Beta
+
+on:
+  push:
+    branches:
+      - beta
+  workflow_dispatch:
+
+jobs:
+  build-and-release-beta:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw
+      run: pnpm build
+        
+    - name: Build UI
+      run: pnpm ui:build
+        
+    - name: Get version from package.json
+      id: get_version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Create beta tag
+      run: |
+        git tag v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
+        git push origin v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
+        
+    - name: Create Release (Beta)
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
+        release_name: OpenClaw Beta ${{ env.VERSION }}
+        draft: false
+        prerelease: true
+        
+    - name: Package for all platforms
+      run: bash scripts/build-all-platforms.sh beta
+        
+    - name: Upload Release Assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/openclaw-${{ env.VERSION }}-beta.tgz
+        asset_name: openclaw-${{ env.VERSION }}-beta.tgz
+        asset_content_type: application/gzip
+        
+    - name: Upload macOS DMG (if exists)
+      if: hashFiles('./dist/*.dmg') != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/OpenClaw-${{ env.VERSION }}-beta.dmg
+        asset_name: OpenClaw-${{ env.VERSION }}-beta.dmg
+        asset_content_type: application/x-apple-diskimage
+        
+    - name: Upload macOS ZIP (if exists)
+      if: hashFiles('./dist/*.zip') != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip
+        asset_name: OpenClaw-${{ env.VERSION }}-beta-mac.zip
+        asset_content_type: application/zip
+        
+    - name: Upload Android APK (if exists)
+      if: hashFiles('./apps/android/app/build/outputs/apk/**/*.apk') != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./apps/android/app/build/outputs/apk/debug/app-debug.apk
+        asset_name: OpenClaw-${{ env.VERSION }}-beta-android.apk
+        asset_content_type: application/vnd.android.package-archive
+        
+    - name: Update README with beta release link
+      run: |
+        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/snowzlm/openclaw/releases|g" README.md
+        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/snowzlm/openclaw|g" README.md
+        
+    - name: Commit and push README changes
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add README.md
+        git commit -m "chore: update README beta release links for v${{ env.VERSION }}"
+        git push
