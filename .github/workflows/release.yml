@@ -75,8 +75,8 @@ jobs:
     - name: Update README with new release link
       run: |
         # Update README badges and links to point to this repository
-        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/mufengxue6/openclaw/releases|g" README.md
-        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/mufengxue6/openclaw|g" README.md
+        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/snowzlm/openclaw/releases|g" README.md
+        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/snowzlm/openclaw|g" README.md
         
     - name: Commit and push README changes
       run: |
