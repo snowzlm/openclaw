@@ -129,7 +129,7 @@ jobs:
       id: get_release
       run: |
         RELEASE_ID=$(gh release view v${{ env.VERSION }}-beta --json id --jq '.id')
-        UPLOAD_URL=$(gh api repos/mufengxue6/openclaw/releases/$RELEASE_ID/assets --jq '.[].url')
+        UPLOAD_URL=$(gh api repos/mufengxue/openclaw/releases/$RELEASE_ID/assets --jq '.[].url')
         echo "UPLOAD_URL=$UPLOAD_URL" >> $GITHUB_ENV
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
