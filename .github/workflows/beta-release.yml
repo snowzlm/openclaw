@@ -1,4 +1,4 @@
-name: Build and Release OpenClaw Beta
+name: Beta Release - Multi-Platform
 
 on:
   push:
@@ -7,18 +7,68 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-release-beta:
+  get-version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag_name: ${{ steps.get_version.outputs.tag_name }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
+      
+    - name: Get version from package.json
+      id: get_version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        TAG_NAME="v${VERSION}-beta"
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+  create-release:
+    needs: get-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create or update release
+      id: create_release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Check if release already exists
+        if gh release view ${{ needs.get-version.outputs.tag_name }} --repo $GITHUB_REPOSITORY; then
+          echo "Release already exists, updating..."
+          UPLOAD_URL=$(gh release edit ${{ needs.get-version.outputs.tag_name }} \
+            --title "OpenClaw ${{ needs.get-version.outputs.version }} (Beta)" \
+            --notes "Beta release for version ${{ needs.get-version.outputs.version }}" \
+            --draft=false \
+            --prerelease=true \
+            --repo $GITHUB_REPOSITORY \
+            --json uploadUrl --jq '.uploadUrl')
+        else
+          echo "Creating new release..."
+          UPLOAD_URL=$(gh release create ${{ needs.get-version.outputs.tag_name }} \
+            --title "OpenClaw ${{ needs.get-version.outputs.version }} (Beta)" \
+            --notes "Beta release for version ${{ needs.get-version.outputs.version }}" \
+            --draft=false \
+            --prerelease=true \
+            --repo $GITHUB_REPOSITORY \
+            --json uploadUrl --jq '.uploadUrl')
+        fi
+        echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+
+  build-npm:
+    needs: [get-version, create-release]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -39,84 +89,110 @@ jobs:
     - name: Build UI
       run: pnpm ui:build
         
-    - name: Get version from package.json
-      id: get_version
+    - name: Create npm package
       run: |
-        VERSION=$(node -p "require('./package.json').version")
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        npm pack
+        ls -la *.tgz
         
-    - name: Create beta tag
-      run: |
-        git tag v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
-        git push origin v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
-        
-    - name: Create Release (Beta)
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ env.VERSION }}-beta.$(date +%Y%m%d%H%M%S)
-        release_name: OpenClaw Beta ${{ env.VERSION }}
-        draft: false
-        prerelease: true
-        
-    - name: Package for all platforms
-      run: bash scripts/build-all-platforms.sh beta
-        
-    - name: Upload Release Assets
+    - name: Upload npm package
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/openclaw-${{ env.VERSION }}-beta.tgz
-        asset_name: openclaw-${{ env.VERSION }}-beta.tgz
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./openclaw-${{ needs.get-version.outputs.version }}.tgz
+        asset_name: openclaw-${{ needs.get-version.outputs.version }}.tgz
         asset_content_type: application/gzip
+
+  build-macos:
+    needs: [get-version, create-release]
+    runs-on: macos-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
         
-    - name: Upload macOS DMG (if exists)
-      if: hashFiles('./dist/*.dmg') != ''
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw
+      run: pnpm build
+        
+    - name: Build UI
+      run: pnpm ui:build
+        
+    - name: Build macOS App Bundle
+      run: |
+        bash scripts/package-mac-app.sh
+        ls -la dist/
+        
+    - name: Create ZIP archive
+      run: |
+        cd dist
+        zip -r ../OpenClaw-${{ needs.get-version.outputs.version }}-mac.zip OpenClaw.app
+        
+    - name: Upload macOS ZIP
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/OpenClaw-${{ env.VERSION }}-beta.dmg
-        asset_name: OpenClaw-${{ env.VERSION }}-beta.dmg
-        asset_content_type: application/x-apple-diskimage
-        
-    - name: Upload macOS ZIP (if exists)
-      if: hashFiles('./dist/*.zip') != ''
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip
-        asset_name: OpenClaw-${{ env.VERSION }}-beta-mac.zip
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./OpenClaw-${{ needs.get-version.outputs.version }}-mac.zip
+        asset_name: OpenClaw-${{ needs.get-version.outputs.version }}-mac.zip
         asset_content_type: application/zip
+
+  build-dmg:
+    needs: [get-version, create-release]
+    runs-on: macos-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
         
-    - name: Upload Android APK (if exists)
-      if: hashFiles('./apps/android/app/build/outputs/apk/**/*.apk') != ''
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw
+      run: pnpm build
+        
+    - name: Build macOS App Bundle
+      run: bash scripts/package-mac-app.sh
+        
+    - name: Install create-dmg
+      run: npm install -g create-dmg
+        
+    - name: Create DMG
+      run: |
+        create-dmg \
+          --volname "OpenClaw" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "OpenClaw.app" 200 190 \
+          --hide-extension "OpenClaw.app" \
+          --app-drop-link 600 185 \
+          "OpenClaw-${{ needs.get-version.outputs.version }}.dmg" \
+          "dist/OpenClaw.app"
+        
+    - name: Upload DMG
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./apps/android/app/build/outputs/apk/debug/app-debug.apk
-        asset_name: OpenClaw-${{ env.VERSION }}-beta-android.apk
-        asset_content_type: application/vnd.android.package-archive
-        
-    - name: Update README with beta release link
-      run: |
-        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/snowzlm/openclaw/releases|g" README.md
-        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/snowzlm/openclaw|g" README.md
-        
-    - name: Commit and push README changes
-      run: |
-        git config --global user.name 'GitHub Actions'
-        git config --global user.email 'actions@github.com'
-        git add README.md
-        git commit -m "chore: update README beta release links for v${{ env.VERSION }}"
-        git push
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./OpenClaw-${{ needs.get-version.outputs.version }}.dmg
+        asset_name: OpenClaw-${{ needs.get-version.outputs.version }}.dmg
+        asset_content_type: application/x-apple-diskimage
