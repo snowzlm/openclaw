@@ -50,8 +50,8 @@ jobs:
         git reset --hard ${{ env.LATEST_COMMIT }}
         
         # 更新 package.json 中的仓库信息指向你的仓库
-        sed -i "s|\"url\": \"git+https://github.com/openclaw/openclaw.git\"|\"url\": \"git+https://github.com/mufengxue6/openclaw.git\"|g" package.json
-        sed -i "s|\"repository\": \"openclaw/openclaw\"|\"repository\": \"mufengxue6/openclaw\"|g" package.json
+        sed -i "s|\"url\": \"git+https://github.com/openclaw/openclaw.git\"|\"url\": \"git+https://github.com/snowzlm/openclaw.git\"|g" package.json
+        sed -i "s|\"repository\": \"openclaw/openclaw\"|\"repository\": \"snowzlm/openclaw\"|g" package.json
         
         # 提交更改
         git config --global user.name 'GitHub Actions'
