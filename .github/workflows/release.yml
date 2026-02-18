@@ -1,9 +1,9 @@
-name: Build and Release OpenClaw
+name: Build and Release OpenClaw Beta
 
 on:
   push:
     branches:
-      - main
+      - beta
   workflow_dispatch:
 
 jobs:
@@ -51,16 +51,16 @@ jobs:
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         
-    - name: Create Release
+    - name: Create Beta Release
       id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ env.VERSION }}
-        release_name: OpenClaw ${{ env.VERSION }}
+        tag_name: v${{ env.VERSION }}-beta
+        release_name: OpenClaw ${{ env.VERSION }} (Beta)
         draft: false
-        prerelease: false
+        prerelease: true
         
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
@@ -72,16 +72,16 @@ jobs:
         asset_name: openclaw-${{ env.VERSION }}.tgz
         asset_content_type: application/gzip
         
-    - name: Update README with new release link
+    - name: Update README with new beta release link
       run: |
         # Update README badges and links to point to this repository
         sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/mufengxue6/openclaw/releases|g" README.md
-        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/mufengxue6/openclaw|g" README.md
+        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/mufengxue6/openclaw?include_prereleases|g" README.md
         
     - name: Commit and push README changes
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
         git add README.md
-        git commit -m "chore: update README release links for v${{ env.VERSION }}"
+        git commit -m "chore: update README beta release links for v${{ env.VERSION }}-beta"
         git push
