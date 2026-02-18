@@ -1,6 +1,6 @@
 {
   "name": "openclaw",
-  "version": "2026.2.17-beta.1",
+  "version": "2026.2.18",
   "description": "Multi-channel AI gateway with extensible messaging integrations",
   "keywords": [],
   "homepage": "https://github.com/openclaw/openclaw#readme",
@@ -11,7 +11,7 @@
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openclaw/openclaw.git"
+    "url": "git+https://github.com/snowzlm/openclaw.git"
   },
   "bin": {
     "openclaw": "openclaw.mjs"
