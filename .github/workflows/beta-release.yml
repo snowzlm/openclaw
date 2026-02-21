@@ -53,37 +53,28 @@ jobs:
         git tag ${{ env.TAG_NAME }}
         git push origin ${{ env.TAG_NAME }}
         
-    - name: Create Release (Beta)
+    - name: Create Release
       id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.TAG_NAME }}
-        release_name: OpenClaw Beta ${{ env.VERSION }} (${{ env.TIMESTAMP }})
+        name: OpenClaw Beta ${{ env.VERSION }} (${{ env.TIMESTAMP }})
         draft: false
         prerelease: true
+        token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Package artifacts
       run: |
-        # Create tarball of dist directory
-        # The user requested format: openclaw+时间戳+beta
-        # Let's verify the requested format carefully: "openclaw+时间戳+beta"
-        # Assuming extension is needed, like .tgz or .tar.gz
-        
         ARTIFACT_NAME="openclaw-${{ env.TIMESTAMP }}-beta.tgz"
         tar -czf "$ARTIFACT_NAME" dist/
         echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
 
-    - name: Upload Release Assets (TGZ)
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload Release Assets
+      uses: softprops/action-gh-release@v2
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./${{ env.ARTIFACT_NAME }}
-        asset_name: ${{ env.ARTIFACT_NAME }}
-        asset_content_type: application/gzip
+        tag_name: ${{ env.TAG_NAME }}
+        files: ${{ env.ARTIFACT_NAME }}
+        token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Update README (Optional)
       continue-on-error: true
