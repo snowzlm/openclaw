@@ -64,26 +64,16 @@ jobs:
         draft: false
         prerelease: true
         
-    - name: Package for all platforms
+    - name: Package artifacts
       run: |
-        # Override the build script to produce files with timestamp
-        # Or rename them after build
-        bash scripts/build-all-platforms.sh beta
+        # Create tarball of dist directory
+        # The user requested format: openclaw+时间戳+beta
+        # Let's verify the requested format carefully: "openclaw+时间戳+beta"
+        # Assuming extension is needed, like .tgz or .tar.gz
         
-        # Rename artifacts to include timestamp as requested: openclaw+时间戳+beta
-        # Assuming build script produces dist/openclaw-${VERSION}-beta.tgz etc.
-        # We need to rename to openclaw-${TIMESTAMP}-beta.tgz
-        
-        mv dist/openclaw-${{ env.VERSION }}-beta.tgz dist/openclaw-${{ env.TIMESTAMP }}-beta.tgz
-        
-        # Also handle other potential artifacts if needed
-        if [ -f "dist/OpenClaw-${{ env.VERSION }}-beta.dmg" ]; then
-          mv "dist/OpenClaw-${{ env.VERSION }}-beta.dmg" "dist/OpenClaw-${{ env.TIMESTAMP }}-beta.dmg"
-        fi
-        
-        if [ -f "dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip" ]; then
-          mv "dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip" "dist/OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip"
-        fi
+        ARTIFACT_NAME="openclaw-${{ env.TIMESTAMP }}-beta.tgz"
+        tar -czf "$ARTIFACT_NAME" dist/
+        echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
 
     - name: Upload Release Assets (TGZ)
       uses: actions/upload-release-asset@v1
@@ -91,31 +81,9 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/openclaw-${{ env.TIMESTAMP }}-beta.tgz
-        asset_name: openclaw-${{ env.TIMESTAMP }}-beta.tgz
+        asset_path: ./${{ env.ARTIFACT_NAME }}
+        asset_name: ${{ env.ARTIFACT_NAME }}
         asset_content_type: application/gzip
-        
-    - name: Upload macOS DMG (if exists)
-      if: hashFiles(format('./dist/OpenClaw-{0}-beta.dmg', env.TIMESTAMP)) != ''
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/OpenClaw-${{ env.TIMESTAMP }}-beta.dmg
-        asset_name: OpenClaw-${{ env.TIMESTAMP }}-beta.dmg
-        asset_content_type: application/x-apple-diskimage
-        
-    - name: Upload macOS ZIP (if exists)
-      if: hashFiles(format('./dist/OpenClaw-{0}-beta-mac.zip', env.TIMESTAMP)) != ''
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip
-        asset_name: OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip
-        asset_content_type: application/zip
         
     - name: Update README (Optional)
       continue-on-error: true
