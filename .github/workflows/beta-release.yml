@@ -1,0 +1,133 @@
+name: Build and Release OpenClaw Beta
+
+on:
+  push:
+    branches:
+      - beta
+  workflow_dispatch:
+
+jobs:
+  build-and-release-beta:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 10.23.0
+        
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Build OpenClaw
+      run: pnpm build
+        
+    - name: Build UI
+      run: pnpm ui:build
+        
+    - name: Get version and timestamp
+      id: get_meta
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "TAG_NAME=v$VERSION-beta.$TIMESTAMP" >> $GITHUB_ENV
+        
+    - name: Create beta tag
+      run: |
+        git tag ${{ env.TAG_NAME }}
+        git push origin ${{ env.TAG_NAME }}
+        
+    - name: Create Release (Beta)
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        release_name: OpenClaw Beta ${{ env.VERSION }} (${{ env.TIMESTAMP }})
+        draft: false
+        prerelease: true
+        
+    - name: Package for all platforms
+      run: |
+        # Override the build script to produce files with timestamp
+        # Or rename them after build
+        bash scripts/build-all-platforms.sh beta
+        
+        # Rename artifacts to include timestamp as requested: openclaw+时间戳+beta
+        # Assuming build script produces dist/openclaw-${VERSION}-beta.tgz etc.
+        # We need to rename to openclaw-${TIMESTAMP}-beta.tgz
+        
+        mv dist/openclaw-${{ env.VERSION }}-beta.tgz dist/openclaw-${{ env.TIMESTAMP }}-beta.tgz
+        
+        # Also handle other potential artifacts if needed
+        if [ -f "dist/OpenClaw-${{ env.VERSION }}-beta.dmg" ]; then
+          mv "dist/OpenClaw-${{ env.VERSION }}-beta.dmg" "dist/OpenClaw-${{ env.TIMESTAMP }}-beta.dmg"
+        fi
+        
+        if [ -f "dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip" ]; then
+          mv "dist/OpenClaw-${{ env.VERSION }}-beta-mac.zip" "dist/OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip"
+        fi
+
+    - name: Upload Release Assets (TGZ)
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/openclaw-${{ env.TIMESTAMP }}-beta.tgz
+        asset_name: openclaw-${{ env.TIMESTAMP }}-beta.tgz
+        asset_content_type: application/gzip
+        
+    - name: Upload macOS DMG (if exists)
+      if: hashFiles(format('./dist/OpenClaw-{0}-beta.dmg', env.TIMESTAMP)) != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/OpenClaw-${{ env.TIMESTAMP }}-beta.dmg
+        asset_name: OpenClaw-${{ env.TIMESTAMP }}-beta.dmg
+        asset_content_type: application/x-apple-diskimage
+        
+    - name: Upload macOS ZIP (if exists)
+      if: hashFiles(format('./dist/OpenClaw-{0}-beta-mac.zip', env.TIMESTAMP)) != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip
+        asset_name: OpenClaw-${{ env.TIMESTAMP }}-beta-mac.zip
+        asset_content_type: application/zip
+        
+    - name: Update README (Optional)
+      continue-on-error: true
+      run: |
+        sed -i "s|https://github.com/openclaw/openclaw/releases|https://github.com/${{ github.repository }}/releases|g" README.md
+        sed -i "s|https://img.shields.io/github/v/release/openclaw/openclaw|https://img.shields.io/github/v/release/${{ github.repository }}|g" README.md
+        
+    - name: Commit and push README changes
+      continue-on-error: true
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add README.md
+        git commit -m "chore: update README for ${{ env.TAG_NAME }}" || echo "No changes to commit"
+        git push || echo "Push failed, continuing"
