@@ -1,0 +1,32 @@
+name: reproduce-openai-responses-89728-family
+
+on:
+  push:
+    branches:
+      - analysis/89728-actions-repro
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  secondary-reproduction:
+    name: Secondary reproduction matrix (#89728 family)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run secondary reproduction matrix
+        run: node scripts/repro/openai-responses-compat-regressions.mjs
+      - name: Print markdown report
+        run: cat artifacts/repro/openai-responses-compat-regressions.md
+      - name: Upload reproduction report
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-responses-89728-secondary-reproduction
+          path: artifacts/repro/
