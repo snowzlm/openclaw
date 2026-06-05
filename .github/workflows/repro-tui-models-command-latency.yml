@@ -1,0 +1,40 @@
+name: Reproduce TUI /models command latency
+
+on:
+  push:
+    branches:
+      - analysis/models-command-latency
+    paths:
+      - scripts/repro/tui-models-command-latency.ts
+      - .github/workflows/repro-tui-models-command-latency.yml
+      - src/tui/tui-command-handlers.ts
+      - package.json
+      - pnpm-lock.yaml
+  workflow_dispatch:
+
+jobs:
+  reproduce:
+    name: TUI /models no-feedback latency reproduction
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Reproduce /models delayed-feedback behavior
+        run: pnpm exec tsx scripts/repro/tui-models-command-latency.ts
+        env:
+          REPRO_MODELS_LIST_DELAY_MS: "2000"
+          REPRO_MODELS_OBSERVATION_MS: "500"
