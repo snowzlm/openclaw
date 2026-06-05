@@ -30,6 +30,8 @@ jobs:
         run: pnpm exec tsx scripts/repro/openai-responses-codepath-regressions.ts
       - name: Run strict repeat retest for #90094
         run: pnpm exec tsx scripts/repro/openai-responses-strict-retest.ts
+      - name: Run gap closure retest
+        run: pnpm exec tsx scripts/repro/openai-responses-gap-closure.ts
       - name: Print fixture/source markdown report
         run: cat artifacts/repro/openai-responses-compat-regressions.md
       - name: Print direct code-path markdown report
