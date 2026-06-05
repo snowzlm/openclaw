@@ -21,11 +21,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Run secondary reproduction matrix
+      - uses: pnpm/action-setup@v4
+      - name: Install dependencies for direct code-path reproduction
+        run: pnpm install --frozen-lockfile
+      - name: Run fixture/source reproduction matrix
         run: node scripts/repro/openai-responses-compat-regressions.mjs
-      - name: Print markdown report
+      - name: Run direct OpenClaw code-path reproduction matrix
+        run: pnpm exec tsx scripts/repro/openai-responses-codepath-regressions.ts
+      - name: Print fixture/source markdown report
         run: cat artifacts/repro/openai-responses-compat-regressions.md
-      - name: Upload reproduction report
+      - name: Print direct code-path markdown report
+        run: cat artifacts/repro/openai-responses-codepath-regressions.md
+      - name: Upload reproduction reports
         uses: actions/upload-artifact@v4
         with:
           name: openai-responses-89728-secondary-reproduction
