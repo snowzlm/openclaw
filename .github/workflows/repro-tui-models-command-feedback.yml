@@ -1,0 +1,42 @@
+name: Repro TUI Models Command Feedback
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - analysis/tui-models-command-latency-repro
+      - fix/tui-models-command-feedback
+    paths:
+      - "src/tui/tui-command-handlers.ts"
+      - "src/tui/tui-command-handlers.test.ts"
+      - ".github/workflows/repro-tui-models-command-feedback.yml"
+      - "test/vitest/vitest.tui.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repro-tui-models-command-feedback-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  tui-models-command-feedback:
+    name: TUI /models command feedback regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Run focused TUI command handler regression
+        run: node scripts/run-vitest.mjs run --config test/vitest/vitest.tui.config.ts src/tui/tui-command-handlers.test.ts

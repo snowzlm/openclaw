@@ -263,6 +263,41 @@ describe("tui command handlers", () => {
     expect(setActivityStatus).toHaveBeenCalledWith("waiting");
   });
 
+  it("renders model loading feedback before listModels resolves", async () => {
+    let resolveModels: (
+      value: Array<{ provider: string; id: string; name?: string }>,
+    ) => void = () => {
+      throw new Error("model list resolver was not initialized");
+    };
+    const modelsPromise = new Promise<Array<{ provider: string; id: string; name?: string }>>(
+      (resolve) => {
+        resolveModels = resolve;
+      },
+    );
+    const listModels = vi.fn(() => modelsPromise);
+    const setActivityStatus = vi.fn();
+
+    const { handleCommand, openOverlay, requestRender } = createHarness({
+      listModels,
+      setActivityStatus,
+    });
+
+    const pending = handleCommand("/models");
+    await Promise.resolve();
+
+    expect(listModels).toHaveBeenCalled();
+    expect(setActivityStatus).toHaveBeenCalledWith("loading models");
+    const loadingOrder = setActivityStatus.mock.invocationCallOrder[0] ?? 0;
+    expect(requestRender.mock.invocationCallOrder.some((order) => order > loadingOrder)).toBe(true);
+    expect(openOverlay).not.toHaveBeenCalled();
+
+    resolveModels([{ provider: "openai", id: "gpt-4o-mini", name: "GPT-4o mini" }]);
+    await pending;
+
+    expect(setActivityStatus).toHaveBeenCalledWith("idle");
+    expect(openOverlay).toHaveBeenCalled();
+  });
+
   it("forwards unknown slash commands to the gateway", async () => {
     const { handleCommand, sendChat, addUser, addSystem, requestRender } = createHarness();
 
