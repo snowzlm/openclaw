@@ -28,6 +28,8 @@ jobs:
         run: node scripts/repro/openai-responses-compat-regressions.mjs
       - name: Run direct OpenClaw code-path reproduction matrix
         run: pnpm exec tsx scripts/repro/openai-responses-codepath-regressions.ts
+      - name: Run strict repeat retest for #90094
+        run: pnpm exec tsx scripts/repro/openai-responses-strict-retest.ts
       - name: Print fixture/source markdown report
         run: cat artifacts/repro/openai-responses-compat-regressions.md
       - name: Print direct code-path markdown report
