@@ -468,6 +468,7 @@ jobs:
           MANTIS_PR_NUMBER: ${{ needs.resolve_request.outputs.pr_number }}
           OPENCLAW_QA_CONVEX_SECRET_CI: ${{ secrets.OPENCLAW_QA_CONVEX_SECRET_CI }}
           OPENCLAW_QA_CONVEX_SITE_URL: ${{ secrets.OPENCLAW_QA_CONVEX_SITE_URL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENCLAW_QA_CREDENTIAL_OWNER_ID: mantis-telegram-desktop-${{ github.run_id }}-${{ github.run_attempt }}
           OPENCLAW_QA_MANTIS_CRABBOX_COORDINATOR: ${{ secrets.OPENCLAW_QA_MANTIS_CRABBOX_COORDINATOR }}
           OPENCLAW_QA_MANTIS_CRABBOX_COORDINATOR_TOKEN: ${{ secrets.OPENCLAW_QA_MANTIS_CRABBOX_COORDINATOR_TOKEN }}
