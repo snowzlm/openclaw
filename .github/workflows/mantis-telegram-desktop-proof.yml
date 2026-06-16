@@ -27,6 +27,15 @@ on:
         description: Optional existing Crabbox desktop lease id or slug to reuse
         required: false
         type: string
+      runner_label:
+        description: Optional trusted runner label for the proof job
+        required: false
+        default: ubuntu-24.04
+        type: choice
+        options:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - blacksmith-16vcpu-ubuntu-2404
       publish_artifact_name:
         description: Optional existing proof artifact name to publish without recapturing
         required: false
@@ -121,6 +130,7 @@ jobs:
       publish_run_id: ${{ steps.resolve.outputs.publish_run_id }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       request_source: ${{ steps.resolve.outputs.request_source }}
+      runner_label: ${{ steps.resolve.outputs.runner_label }}
       should_run: ${{ steps.resolve.outputs.should_run }}
     steps:
       - name: Resolve refs and target PR
@@ -175,6 +185,7 @@ jobs:
                 setOutput("lease_id", "");
                 setOutput("publish_artifact_name", "");
                 setOutput("publish_run_id", "");
+                setOutput("runner_label", "ubuntu-24.04");
                 setOutput("request_source", "unsupported_issue_comment");
                 return;
               }
@@ -191,6 +202,16 @@ jobs:
               core.setFailed(`Unsupported Crabbox provider for Mantis Telegram desktop proof: ${provider}`);
               return;
             }
+            const runnerLabel = inputs.runner_label || "ubuntu-24.04";
+            const allowedRunnerLabels = new Set([
+              "ubuntu-24.04",
+              "ubuntu-24.04-arm",
+              "blacksmith-16vcpu-ubuntu-2404",
+            ]);
+            if (!allowedRunnerLabels.has(runnerLabel)) {
+              core.setFailed(`Unsupported Mantis Telegram proof runner label: ${runnerLabel}`);
+              return;
+            }
 
             setOutput("should_run", "true");
             setOutput("baseline_ref", pr.base.sha);
@@ -201,6 +222,7 @@ jobs:
             setOutput("lease_id", inputs.crabbox_lease_id || "");
             setOutput("publish_artifact_name", inputs.publish_artifact_name || "");
             setOutput("publish_run_id", inputs.publish_run_id || "");
+            setOutput("runner_label", runnerLabel);
             setOutput("request_source", eventName);
 
             if (eventName === "issue_comment") {
@@ -297,9 +319,10 @@ jobs:
     name: Run agentic native Telegram proof
     needs: [resolve_request, validate_refs]
     if: needs.resolve_request.outputs.should_run == 'true' && needs.resolve_request.outputs.publish_artifact_name == ''
-    # Fork-local fallback: use a GitHub-hosted runner so proof runs are not blocked
-    # when the external Blacksmith pool has no available workers.
-    runs-on: ubuntu-24.04
+    # Fork-local fallback defaults to GitHub-hosted ubuntu-24.04 so proof runs are
+    # not blocked when the external Blacksmith pool has no available workers.
+    # Trusted workflow_dispatch callers may select an allowlisted stronger label.
+    runs-on: ${{ needs.resolve_request.outputs.runner_label || 'ubuntu-24.04' }}
     timeout-minutes: 360
     environment: qa-live-shared
     outputs:
@@ -445,6 +468,21 @@ jobs:
             workspace_parent="$(dirname "$workspace_parent")"
           done
           sudo chown -R codex:codex "$GITHUB_WORKSPACE"
+
+      - name: Ensure real-user Telegram proof credentials exist
+        env:
+          OPENCLAW_QA_CONVEX_SECRET_CI: ${{ secrets.OPENCLAW_QA_CONVEX_SECRET_CI }}
+          OPENCLAW_QA_CONVEX_SITE_URL: ${{ secrets.OPENCLAW_QA_CONVEX_SITE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${OPENCLAW_QA_CONVEX_SECRET_CI:-}" ]] || missing+=(OPENCLAW_QA_CONVEX_SECRET_CI)
+          [[ -n "${OPENCLAW_QA_CONVEX_SITE_URL:-}" ]] || missing+=(OPENCLAW_QA_CONVEX_SITE_URL)
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing real-user Telegram proof credential backing secret(s): %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
       - name: Run Codex Mantis Telegram agent
         uses: openai/codex-action@e0fdf01220eb9a88167c4898839d273e3f2609d1
@@ -599,6 +637,10 @@ jobs:
           root="${{ steps.inspect.outputs.output_dir }}"
           if [[ ! -f "$root/mantis-evidence.json" ]]; then
             echo "No Mantis evidence manifest found; skipping PR evidence comment."
+            exit 0
+          fi
+          if [[ -z "${MANTIS_ARTIFACT_R2_ACCESS_KEY_ID:-}" || -z "${MANTIS_ARTIFACT_R2_SECRET_ACCESS_KEY:-}" || -z "${MANTIS_ARTIFACT_R2_ENDPOINT:-}" ]]; then
+            echo "R2 artifact publishing credentials are unavailable; keeping the GitHub Actions artifact only."
             exit 0
           fi
           artifact_url_args=()
