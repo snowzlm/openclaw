@@ -478,7 +478,7 @@ jobs:
           OPENCLAW_TELEGRAM_USER_PROOF_CMD: /usr/local/bin/openclaw-telegram-user-crabbox-proof
         with:
           openai-api-key: ${{ secrets.OPENCLAW_MANTIS_AGENT_OPENAI_API_KEY || secrets.OPENAI_API_KEY }}
-          responses-api-endpoint: ${{ secrets.OPENAI_BASE_URL }}
+          responses-api-endpoint: ${{ secrets.OPENAI_BASE_URL }}/responses
           prompt-file: .github/codex/prompts/mantis-telegram-desktop-proof.md
           model: ${{ vars.OPENCLAW_CI_OPENAI_MODEL_BARE }}
           effort: medium
