@@ -561,20 +561,26 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Create Mantis GitHub App token
+      - name: Select PR comment token
         id: mantis_app_token
         if: ${{ always() && needs.resolve_request.outputs.pr_number != '' }}
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.MANTIS_GITHUB_APP_ID }}
-          private-key: ${{ secrets.MANTIS_GITHUB_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-issues: write
-          permission-pull-requests: write
+        env:
+          FALLBACK_GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="${FALLBACK_GH_PAT:-${GITHUB_TOKEN:-}}"
+          if [[ -z "$token" ]]; then
+            echo "No PR comment token available; evidence publication will use artifact upload only." >&2
+            echo "token=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
 
       - name: Comment PR with inline QA evidence
-        if: ${{ always() && needs.resolve_request.outputs.pr_number != '' && steps.inspect.outputs.output_dir != '' }}
+        if: ${{ always() && needs.resolve_request.outputs.pr_number != '' && steps.inspect.outputs.output_dir != '' && steps.mantis_app_token.outputs.token != '' }}
         env:
           ARTIFACT_URL: ${{ steps.upload_artifact.outputs.artifact-url }}
           GH_TOKEN: ${{ steps.mantis_app_token.outputs.token }}
@@ -664,18 +670,25 @@ jobs:
           echo "PUBLISH_RUN_ID=${run_id}" >> "$GITHUB_ENV"
           echo "PUBLISH_ARTIFACT_URL=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts/${artifact_id}" >> "$GITHUB_ENV"
 
-      - name: Create Mantis GitHub App token
+      - name: Select PR comment token
         id: mantis_app_token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.MANTIS_GITHUB_APP_ID }}
-          private-key: ${{ secrets.MANTIS_GITHUB_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-issues: write
-          permission-pull-requests: write
+        env:
+          FALLBACK_GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="${FALLBACK_GH_PAT:-${GITHUB_TOKEN:-}}"
+          if [[ -z "$token" ]]; then
+            echo "No PR comment token available; evidence publication will use artifact upload only." >&2
+            echo "token=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
 
       - name: Comment PR with inline QA evidence
+        if: ${{ steps.mantis_app_token.outputs.token != '' }}
         env:
           GH_TOKEN: ${{ steps.mantis_app_token.outputs.token }}
           MANTIS_ARTIFACT_R2_ACCESS_KEY_ID: ${{ secrets.MANTIS_ARTIFACT_R2_ACCESS_KEY_ID }}
