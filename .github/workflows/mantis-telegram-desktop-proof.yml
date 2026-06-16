@@ -297,7 +297,9 @@ jobs:
     name: Run agentic native Telegram proof
     needs: [resolve_request, validate_refs]
     if: needs.resolve_request.outputs.should_run == 'true' && needs.resolve_request.outputs.publish_artifact_name == ''
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    # Fork-local fallback: use a GitHub-hosted runner so proof runs are not blocked
+    # when the external Blacksmith pool has no available workers.
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     environment: qa-live-shared
     outputs:
