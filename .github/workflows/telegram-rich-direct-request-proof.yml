@@ -53,7 +53,7 @@ jobs:
 
       - name: Run direct Telegram Bot API proof
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.OPENCLAW_QA_TELEGRAM_SUT_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.OPENCLAW_QA_TELEGRAM_MANTIS_SUT_BOT_TOKEN || secrets.OPENCLAW_QA_TELEGRAM_SUT_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ inputs.telegram_chat_id }}
           CANDIDATE_REF: ${{ inputs.candidate_ref }}
           UPSTREAM_PR: ${{ inputs.upstream_pr }}
@@ -69,7 +69,30 @@ jobs:
           import { writeFileSync } from 'node:fs';
           import { buildTelegramRichHtml } from '../../extensions/telegram/src/rich-message.ts';
 
-          const token = process.env.TELEGRAM_BOT_TOKEN;
+          const normalizeBotToken = (value) => {
+            const trimmed = String(value || '').trim();
+            const urlMatch = trimmed.match(/(?:^|\/)bot([^/?#\s]+)(?:[/?#\s]|$)/);
+            if (urlMatch?.[1]) return urlMatch[1];
+            return trimmed.startsWith('bot') ? trimmed.slice(3) : trimmed;
+          };
+          const telegramMethodUrl = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
+          const sanitizedError = (body) =>
+            body && typeof body === 'object'
+              ? {
+                  ok: body.ok === true,
+                  error_code: body.error_code,
+                  description: body.description,
+                }
+              : { ok: false, description: '[non-object response]' };
+          const readTelegramBody = async (response) => {
+            try {
+              return await response.json();
+            } catch {
+              return { ok: false, description: '[non-json response]' };
+            }
+          };
+
+          const token = normalizeBotToken(process.env.TELEGRAM_BOT_TOKEN);
           const chatId = process.env.TELEGRAM_CHAT_ID;
           const candidateRef = process.env.CANDIDATE_REF;
           const upstreamPr = process.env.UPSTREAM_PR || '';
@@ -91,19 +114,7 @@ jobs:
             if (!ok) throw new Error(`assertion failed before request: ${name}`);
           }
 
-          const getMeResponse = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-          const getMeBody = await getMeResponse.json();
-          if (!getMeResponse.ok || getMeBody.ok !== true) {
-            throw new Error(`getMe failed: HTTP ${getMeResponse.status}`);
-          }
-
           const payload = { chat_id: chatId, rich_message: rich, disable_notification: true };
-          const sendResponse = await fetch(`https://api.telegram.org/bot${token}/sendRichMessage`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          const sendBody = await sendResponse.json().catch(async () => ({ raw: await sendResponse.text() }));
           const requestLog = {
             upstreamPr,
             candidateRef,
@@ -115,39 +126,69 @@ jobs:
           };
           const responseLog = {
             getMe: {
-              httpStatus: getMeResponse.status,
-              ok: getMeBody.ok === true,
-              botUsernamePresent: typeof getMeBody.result?.username === 'string' && getMeBody.result.username.length > 0,
+              httpStatus: undefined,
+              ok: false,
+              botUsernamePresent: false,
+              error: undefined,
             },
             sendRichMessage: {
-              httpStatus: sendResponse.status,
-              ok: sendBody.ok === true,
-              result: sendBody.result ? {
-                message_id: sendBody.result.message_id,
-                date: sendBody.result.date,
-                chat_type: sendBody.result.chat?.type,
-                has_rich_message: Boolean(sendBody.result.rich_message),
-              } : undefined,
-              error: sendBody.ok === true ? undefined : sendBody,
+              httpStatus: undefined,
+              ok: false,
+              result: undefined,
+              error: undefined,
             },
           };
-          writeFileSync('.artifacts/telegram-rich-direct-request/request.sanitized.json', JSON.stringify(requestLog, null, 2));
-          writeFileSync('.artifacts/telegram-rich-direct-request/response.sanitized.json', JSON.stringify(responseLog, null, 2));
-          writeFileSync('.artifacts/telegram-rich-direct-request/summary.md', [
-            '# Telegram Rich Direct Request Proof',
-            '',
-            `- upstream PR: ${upstreamPr || 'n/a'}`,
-            `- candidate ref: \`${candidateRef}\``,
-            '- operation: `sendRichMessage`',
-            '- endpoint: `https://api.telegram.org/bot[REDACTED]/sendRichMessage`',
-            `- getMe ok: ${responseLog.getMe.ok}`,
-            `- sendRichMessage ok: ${responseLog.sendRichMessage.ok}`,
-            `- inline separator materialized: ${assertions.inlineSeparatorMaterialized}`,
-            `- plain line breaks materialized: ${assertions.plainLineBreaksMaterialized}`,
-            `- code line breaks literal: ${assertions.codeLineBreakLiteral}`,
-            `- math line breaks literal: ${assertions.mathLineBreakLiteral}`,
-            `- native draft used: false`,
-          ].join('\n'));
+          const writeArtifacts = () => {
+            writeFileSync('.artifacts/telegram-rich-direct-request/request.sanitized.json', JSON.stringify(requestLog, null, 2));
+            writeFileSync('.artifacts/telegram-rich-direct-request/response.sanitized.json', JSON.stringify(responseLog, null, 2));
+            writeFileSync('.artifacts/telegram-rich-direct-request/summary.md', [
+              '# Telegram Rich Direct Request Proof',
+              '',
+              `- upstream PR: ${upstreamPr || 'n/a'}`,
+              `- candidate ref: \`${candidateRef}\``,
+              '- operation: `sendRichMessage`',
+              '- endpoint: `https://api.telegram.org/bot[REDACTED]/sendRichMessage`',
+              `- getMe ok: ${responseLog.getMe.ok}`,
+              `- sendRichMessage ok: ${responseLog.sendRichMessage.ok}`,
+              `- inline separator materialized: ${assertions.inlineSeparatorMaterialized}`,
+              `- plain line breaks materialized: ${assertions.plainLineBreaksMaterialized}`,
+              `- code line breaks literal: ${assertions.codeLineBreakLiteral}`,
+              `- math line breaks literal: ${assertions.mathLineBreakLiteral}`,
+              `- native draft used: false`,
+            ].join('\n'));
+          };
+
+          const getMeResponse = await fetch(telegramMethodUrl(token, 'getMe'));
+          const getMeBody = await readTelegramBody(getMeResponse);
+          responseLog.getMe = {
+            httpStatus: getMeResponse.status,
+            ok: getMeBody.ok === true,
+            botUsernamePresent: typeof getMeBody.result?.username === 'string' && getMeBody.result.username.length > 0,
+            error: getMeBody.ok === true ? undefined : sanitizedError(getMeBody),
+          };
+          if (!getMeResponse.ok || getMeBody.ok !== true) {
+            writeArtifacts();
+            throw new Error(`getMe failed: HTTP ${getMeResponse.status}`);
+          }
+
+          const sendResponse = await fetch(telegramMethodUrl(token, 'sendRichMessage'), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const sendBody = await readTelegramBody(sendResponse);
+          responseLog.sendRichMessage = {
+            httpStatus: sendResponse.status,
+            ok: sendBody.ok === true,
+            result: sendBody.result ? {
+              message_id: sendBody.result.message_id,
+              date: sendBody.result.date,
+              chat_type: sendBody.result.chat?.type,
+              has_rich_message: Boolean(sendBody.result.rich_message),
+            } : undefined,
+            error: sendBody.ok === true ? undefined : sanitizedError(sendBody),
+          };
+          writeArtifacts();
           if (!sendResponse.ok || sendBody.ok !== true) {
             throw new Error(`sendRichMessage failed: HTTP ${sendResponse.status}`);
           }
