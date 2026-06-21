@@ -1,0 +1,161 @@
+name: Telegram Rich Direct Request Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_repository:
+        description: Repository containing the candidate ref
+        required: true
+        default: snowzlmbot/openclaw
+        type: string
+      candidate_ref:
+        description: Exact candidate commit SHA to verify
+        required: true
+        type: string
+      upstream_pr:
+        description: Upstream PR number for evidence metadata
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  direct_request_proof:
+    name: Direct Bot API rich-message proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.candidate_repository }}
+          ref: ${{ inputs.candidate_ref }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies for source import
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run direct Telegram Bot API proof
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.OPENCLAW_QA_TELEGRAM_SUT_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.OPENCLAW_QA_TELEGRAM_GROUP_ID }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
+          UPSTREAM_PR: ${{ inputs.upstream_pr }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
+            echo "Required Telegram proof secret(s) are not configured." >&2
+            exit 1
+          fi
+          mkdir -p .artifacts/telegram-rich-direct-request
+          cat > .artifacts/telegram-rich-direct-request/run-proof.mjs <<'JS'
+          import { writeFileSync } from 'node:fs';
+          import { buildTelegramRichHtml } from '../../extensions/telegram/src/rich-message.ts';
+
+          const token = process.env.TELEGRAM_BOT_TOKEN;
+          const chatId = process.env.TELEGRAM_CHAT_ID;
+          const candidateRef = process.env.CANDIDATE_REF;
+          const upstreamPr = process.env.UPSTREAM_PR || '';
+          const sourceHtml = [
+            '<b>PR95413 direct request proof inline-one</b>\n<a href="https://example.com">inline-two</a>',
+            'plain-one\nplain-two',
+            '<pre><code>code-one\ncode-two</code></pre>after\nline',
+            '<tg-math>x\ny</tg-math>after-math\nline',
+          ].join('\n\n');
+          const rich = buildTelegramRichHtml(sourceHtml, { skipEntityDetection: true });
+          const assertions = {
+            inlineSeparatorMaterialized: rich.html.includes('</b><br><a href="https://example.com">'),
+            plainLineBreaksMaterialized: rich.html.includes('plain-one<br>plain-two'),
+            codeLineBreakLiteral: rich.html.includes('<pre><code>code-one\ncode-two</code></pre>'),
+            mathLineBreakLiteral: rich.html.includes('<tg-math>x\ny</tg-math>'),
+            noNativeDraft: true,
+          };
+          for (const [name, ok] of Object.entries(assertions)) {
+            if (!ok) throw new Error(`assertion failed before request: ${name}`);
+          }
+
+          const getMeResponse = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+          const getMeBody = await getMeResponse.json();
+          if (!getMeResponse.ok || getMeBody.ok !== true) {
+            throw new Error(`getMe failed: HTTP ${getMeResponse.status}`);
+          }
+
+          const payload = { chat_id: chatId, rich_message: rich, disable_notification: true };
+          const sendResponse = await fetch(`https://api.telegram.org/bot${token}/sendRichMessage`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const sendBody = await sendResponse.json().catch(async () => ({ raw: await sendResponse.text() }));
+          const requestLog = {
+            upstreamPr,
+            candidateRef,
+            operation: 'sendRichMessage',
+            endpoint: 'https://api.telegram.org/bot[REDACTED]/sendRichMessage',
+            payload: { ...payload, chat_id: '[REDACTED_CHAT]' },
+            assertions,
+            sourceHtml,
+          };
+          const responseLog = {
+            getMe: {
+              httpStatus: getMeResponse.status,
+              ok: getMeBody.ok === true,
+              botUsernamePresent: typeof getMeBody.result?.username === 'string' && getMeBody.result.username.length > 0,
+            },
+            sendRichMessage: {
+              httpStatus: sendResponse.status,
+              ok: sendBody.ok === true,
+              result: sendBody.result ? {
+                message_id: sendBody.result.message_id,
+                date: sendBody.result.date,
+                chat_type: sendBody.result.chat?.type,
+                has_rich_message: Boolean(sendBody.result.rich_message),
+              } : undefined,
+              error: sendBody.ok === true ? undefined : sendBody,
+            },
+          };
+          writeFileSync('.artifacts/telegram-rich-direct-request/request.sanitized.json', JSON.stringify(requestLog, null, 2));
+          writeFileSync('.artifacts/telegram-rich-direct-request/response.sanitized.json', JSON.stringify(responseLog, null, 2));
+          writeFileSync('.artifacts/telegram-rich-direct-request/summary.md', [
+            '# Telegram Rich Direct Request Proof',
+            '',
+            `- upstream PR: ${upstreamPr || 'n/a'}`,
+            `- candidate ref: \`${candidateRef}\``,
+            '- operation: `sendRichMessage`',
+            '- endpoint: `https://api.telegram.org/bot[REDACTED]/sendRichMessage`',
+            `- getMe ok: ${responseLog.getMe.ok}`,
+            `- sendRichMessage ok: ${responseLog.sendRichMessage.ok}`,
+            `- inline separator materialized: ${assertions.inlineSeparatorMaterialized}`,
+            `- plain line breaks materialized: ${assertions.plainLineBreaksMaterialized}`,
+            `- code line breaks literal: ${assertions.codeLineBreakLiteral}`,
+            `- math line breaks literal: ${assertions.mathLineBreakLiteral}`,
+            `- native draft used: false`,
+          ].join('\n'));
+          if (!sendResponse.ok || sendBody.ok !== true) {
+            throw new Error(`sendRichMessage failed: HTTP ${sendResponse.status}`);
+          }
+          console.log(JSON.stringify({ request: requestLog, response: responseLog }, null, 2));
+          JS
+          node --import tsx .artifacts/telegram-rich-direct-request/run-proof.mjs
+
+      - name: Upload direct request proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: telegram-rich-direct-request-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/telegram-rich-direct-request
+          if-no-files-found: error
