@@ -17,6 +17,10 @@ on:
         required: false
         default: ""
         type: string
+      telegram_chat_id:
+        description: Telegram proof chat id; internal proof input, redacted from artifacts
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -50,7 +54,7 @@ jobs:
       - name: Run direct Telegram Bot API proof
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.OPENCLAW_QA_TELEGRAM_SUT_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.OPENCLAW_QA_TELEGRAM_GROUP_ID }}
+          TELEGRAM_CHAT_ID: ${{ inputs.telegram_chat_id }}
           CANDIDATE_REF: ${{ inputs.candidate_ref }}
           UPSTREAM_PR: ${{ inputs.upstream_pr }}
         shell: bash
