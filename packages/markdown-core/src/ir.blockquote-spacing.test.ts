@@ -12,15 +12,15 @@
  *   - Blockquote content followed by paragraph: "quote\n\nparagraph" (double \n)
  *   - Two consecutive blockquotes: "first\n\nsecond" (double \n)
  *
- * BUG (current behavior):
- *   - Produces triple newlines: "quote\n\n\nparagraph"
+ * Historical regression guarded by these tests:
+ *   - The buggy output produced triple newlines: "quote\n\n\nparagraph"
  *
- * Root cause:
- *   1. `paragraph_close` inside blockquote adds `\n\n` (correct)
- *   2. `blockquote_close` adds another `\n` (incorrect)
- *   3. Result: `\n\n\n` (triple newlines - incorrect)
+ * Historical root cause:
+ *   1. `paragraph_close` inside blockquote added `\n\n` (correct)
+ *   2. `blockquote_close` added another `\n` (incorrect)
+ *   3. Resulted in `\n\n\n` (triple newlines - incorrect)
  *
- * The fix: `blockquote_close` should NOT add `\n` because:
+ * The guarded fix: `blockquote_close` should NOT add `\n` because:
  *   - Blockquotes are container blocks, not leaf blocks
  *   - The inner content (paragraph, heading, etc.) already provides block separation
  *   - Container closings shouldn't add their own spacing
