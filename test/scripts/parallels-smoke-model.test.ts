@@ -42,6 +42,10 @@ import { parseArgs as parseLinuxSmokeArgs } from "../../scripts/e2e/parallels/li
 import { parseArgs as parseMacosSmokeArgs } from "../../scripts/e2e/parallels/macos-smoke.ts";
 import { parseArgs as parseNpmUpdateSmokeArgs } from "../../scripts/e2e/parallels/npm-update-smoke.ts";
 import { PhaseRunner } from "../../scripts/e2e/parallels/phase-runner.ts";
+import {
+  posixCodexPlatformPackageRepairFunction,
+  windowsCodexPlatformPackageRepairFunction,
+} from "../../scripts/e2e/parallels/plugin-isolation.ts";
 import { parseArgs as parseWindowsSmokeArgs } from "../../scripts/e2e/parallels/windows-smoke.ts";
 import { withEnv } from "../../src/test-utils/env.js";
 import { spawnNodeEvalSync } from "../../src/test-utils/node-process.js";
@@ -273,6 +277,20 @@ describe("Parallels smoke model selection", () => {
       expect(script, scriptPath).toContain("--model <provider/model>");
       expect(script, scriptPath).toContain("modelId");
     }
+  });
+
+  it("repairs only the exact missing Codex platform package failure with a fresh npm cache", () => {
+    const posixRepair = posixCodexPlatformPackageRepairFunction();
+    const windowsRepair = windowsCodexPlatformPackageRepairFunction();
+
+    for (const repair of [posixRepair, windowsRepair]) {
+      expect(repair).toContain("Missing optional dependency @openai/codex-");
+      expect(repair).toContain("NPM_CONFIG_CACHE");
+      expect(repair).toContain("--ignore-scripts");
+      expect(repair).toContain("codex-platform-repair: managed npm install completed");
+    }
+    expect(posixRepair).toContain("repair_missing_codex_platform_package");
+    expect(windowsRepair).toContain("Repair-MissingCodexPlatformPackage");
   });
 
   it("writes full model ids as config map keys in provider batches", () => {
@@ -934,6 +952,14 @@ if (isPrlctl) {
     const guestTransports = readFileSync(TS_PATHS.guestTransports, "utf8");
 
     expect(guestTransports.match(/umask 022/g)).toHaveLength(2);
+  });
+
+  it("hardens restored macOS install lanes", () => {
+    const macos = readFileSync(TS_PATHS.macos, "utf8");
+
+    expect(macos).toContain('rm -rf "$HOME/.npm/_cacache"');
+    expect(macos.match(/\.onboard-ref", 420/g)).toHaveLength(2);
+    expect(macos).toContain('echo "npm install attempt $attempt failed; retrying in 5s"');
   });
 
   it("provisions portable Git before Windows dev update lanes", () => {
