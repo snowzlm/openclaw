@@ -160,14 +160,16 @@ const config = {
   update: { checkOnStart: false },
   browser: { enabled: false },
   agents: {
+    ownership: "explicit",
     defaults: {
+      systemAgent: { agentId: "main" },
       workspace,
       skipBootstrap: true,
       model: { primary: model },
       utilityModel: model,
       heartbeat: { every: "0m" },
       thinkingDefault: "off",
-      models: { [model]: { agentRuntime: { id: "openclaw" } } },
+      modelPolicy: { allow: [model] },
     },
     entries: {
       main: { workspace },
@@ -183,6 +185,7 @@ const config = {
         baseUrl: `http://127.0.0.1:${providerPort}/v1`,
         apiKey: env.VLLM_API_KEY,
         api: "openai-completions",
+        agentRuntime: { id: "openclaw" },
         request: { allowPrivateNetwork: true },
         models: [
           {
