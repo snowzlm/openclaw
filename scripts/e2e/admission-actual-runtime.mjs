@@ -21,6 +21,7 @@ const env = {
   PATH: process.env.PATH,
   HOME: home,
   CI: "true",
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
   LANG: "C.UTF-8",
   OPENCLAW_STATE_DIR: state,
   OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
@@ -351,6 +352,8 @@ try {
     "plugins",
     "install",
     pluginSpec,
+    // This reviewed, pinned npm source is authorized only in ephemeral test state.
+    "--force",
     "--pin",
     "--accept-capabilities",
     "--acknowledge-install-policy-warning",
