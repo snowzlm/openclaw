@@ -56,3 +56,30 @@ durable admission, and dispatches without duplicating the user write.
 
 The manual workflow explicitly fetches its immutable baseline before reading
 the source blob, so later branch/main dispatches do not depend on shallow depth.
+
+## Actual isolated runtime exploration
+
+The optional `actual_runtime=true` dispatch builds the real OpenClaw CLI and SDK
+on a GitHub-hosted runner and installs the pinned published
+`@martian-engineering/lossless-claw@1.1.1` package only in temporary test state.
+The isolated Gateway binds loopback on a separate free port. No operator state,
+production data, channel credentials, paid provider keys, or installed Gateway
+files are used. The test environment is explicit; no ambient credentials are
+inherited by the runtime subprocesses. No config, transcript, or database is
+uploaded.
+
+The HTTP model endpoint is an explicitly disclosed loopback stub, not inference.
+The production HTTP provider adapter, CLI/Gateway entrypoints, target producers,
+manager writes and durable engine run unchanged. The script neither forges
+admission receipts nor monkeypatches ownership checks. It explores fresh and
+persisted history, supplied uppercase keys, a fixed store locator with distinct
+agents, public parent-linked creation, public reset, and restart of the owned
+test Gateway. Read-only aggregate counts in the plugin's `turn_advancements`
+table distinguish actual durable advancement from a silent legacy fallback.
+
+This lane is exploratory: successful turns show only that these actual setup
+scenarios preserve ownership. They do not reproduce the incident or supply
+after-fix rejection diagnostics. A setup, compatibility, or migration failure
+is reported at its exact stage rather than replaced with synthetic receipt
+injection. Only an organically reached rejecting callback would add real-setup
+diagnostic evidence; the incident's producer still requires independent replay.
