@@ -1,0 +1,43 @@
+name: Plugin delivery fail-closed regression
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plugin-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "26.13.0"
+          install-bun: "false"
+          cache-mode: off
+      - name: Verify matching release baseline
+        run: |
+          test "$(git rev-parse HEAD^)" = bc061f935bfd79ad09e3e98c6df9f2e8f1e28bea
+          git rev-parse HEAD
+      - name: Original source rejects all seven regression cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner=src/agents/openclaw-plugin-tools.ts
+          cp "$owner" "${RUNNER_TEMP}/plugin-delivery-after.ts"
+          trap 'cp "${RUNNER_TEMP}/plugin-delivery-after.ts" "$owner"' EXIT
+          git show bc061f935bfd79ad09e3e98c6df9f2e8f1e28bea:"$owner" > "$owner"
+          set +e
+          pnpm test src/agents/openclaw-tools.browser-plugin.integration.test.ts --maxWorkers=1 -t 'initializes unrelated plugin tools without delivery' > "${RUNNER_TEMP}/plugin-delivery-before.log" 2>&1
+          status=$?
+          set -e
+          cat "${RUNNER_TEMP}/plugin-delivery-before.log"
+          test "$status" -ne 0
+          grep -Eq '7 failed' "${RUNNER_TEMP}/plugin-delivery-before.log"
+          grep -F 'plugin delivery capability is no longer active' "${RUNNER_TEMP}/plugin-delivery-before.log"
+      - name: Fixed source preserves full plugin delivery regression suite
+        run: |
+          git diff --exit-code -- src/agents/openclaw-plugin-tools.ts
+          /usr/bin/time -p pnpm test src/agents/openclaw-tools.browser-plugin.integration.test.ts --maxWorkers=1

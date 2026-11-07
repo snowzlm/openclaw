@@ -328,6 +328,42 @@ describe("createOpenClawTools browser plugin integration", () => {
     expect(resolveTools({ ...deliveryOptions, config: {} }).context.delivery).toBeUndefined();
   });
 
+  it.each([
+    "unknown",
+    "revoked",
+    "expired",
+    "agentId",
+    "runId",
+    "sessionKey",
+    "sessionId",
+  ] as const)("initializes unrelated plugin tools without delivery for %s capability", (kind) => {
+    installChannel(telegramPlugin(), ["work"]);
+    const overrides =
+      kind === "expired"
+        ? { nowMs: 1, ttlMs: 1 }
+        : kind === "agentId"
+          ? { agentId: "other" }
+          : kind === "runId"
+            ? { runId: "other-run" }
+            : kind === "sessionKey"
+              ? { sessionKey: "agent:main:other" }
+              : kind === "sessionId"
+                ? { sessionId: "other-session" }
+                : {};
+    const token = kind === "unknown" ? "unissued-test-capability" : mintTurn(overrides);
+    if (kind === "revoked") {
+      revokeMessageActionTurnCapability(token);
+    }
+    const result = resolveTools({
+      ...deliveryOptions,
+      config: {},
+      messageActionTurnCapability: token,
+    });
+    expect(hoisted.resolvePluginTools).toHaveBeenCalledOnce();
+    expect(result.context.deliveryContext?.to).toBe("123");
+    expect(result.context.delivery).toBeUndefined();
+  });
+
   it("does not expose CLI message-only authority to plugin delivery", async () => {
     const caller = { ...identity, runId: "cli-message-only", sessionId: "session-cli" };
     const token = mintTurn({

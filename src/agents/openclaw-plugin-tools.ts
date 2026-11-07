@@ -123,7 +123,11 @@ function createPluginToolDelivery(params: {
     sessionId,
   };
   const messageActionAuthorization = resolveMessageActionTurnAuthorization(turnIdentity);
-  if (messageActionAuthorization?.scheduled || messageActionAuthorization?.deliveryAttempt) {
+  // Optional plugin delivery must not prevent unrelated tools from initializing.
+  if (!messageActionAuthorization) {
+    return undefined;
+  }
+  if (messageActionAuthorization.scheduled || messageActionAuthorization.deliveryAttempt) {
     // Cron capabilities are consumed by individual message actions. They do not
     // delegate the source conversation's plugin delivery capability.
     return undefined;

@@ -1,0 +1,2 @@
+# Existing plugin fixture: absent, revoked, expired and four identity mismatches deny delivery without blocking tool preparation.
+36
